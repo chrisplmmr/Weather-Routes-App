@@ -1,0 +1,480 @@
+<!DOCTYPE HTML>
+<html>
+
+<head>
+
+    <title>Weather Maps</title>
+    <link rel="stylesheet" href="WeatherMaps.css">
+    <meta http-equiv="Content-Type" content="text/html; charset=iso-8859-1">
+    <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.7.1/jquery.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <script type="text/javascript" async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCb1cNnqPON86Tr-KctC6Sm1wSpvWeqLU8&callback=initMap"></script>
+    <style>
+	.dirClass{
+		height:400px;
+		width:350px;
+		margin-bottom: 10px;
+		border:4px solid black;
+		color: black;
+		overflow:auto;
+		float: left;
+	}
+	#map{
+		height: 400px;
+		margin-right: 20%;
+		margin-left: 20%;
+	}
+     </style>
+
+</head>
+
+
+<body style="margin:0;">
+
+<div class="header" id="example1" style="padding-bottom: 45px;">
+    <span class="city"><p id="incity" >Enter Zip Code</p>
+    <span class="zipcode"><input type="text" id="zip" name="zipcode1" placeholder="Search Zip Code" style="height:50px;"></input><div class="text-error"></div></span>
+</div>
+
+<div style="background-color: rgba(0, 0, 0, 0);"><table style="position: absolute; top: 9px; left: 430px; color: white"><tr id="weatherForecast"></tr></table></div>
+<div class="topmap" style="margin-top: 30px; margin-bottom: 10px; height: 30px;">
+    <p id="linktext" style="position: relative; bottom: 17px;"><a id="link" href="https://www.google.com" target="_blank" >Click Here</a> to view your route in a new tab</p>
+</div>
+
+<div id="map"></div>
+
+<div class="inputObjects" style="text-align: center; color: white; padding-top: 25px;">
+    <input id = "start" type="text"  placeholder="Enter Start Location" style="padding-right: 90px; height: 30px;">
+    <button id = "search" onclick="getLocations()" style="margin-right: 20px; margin-left: 20px; height: 30px;">Search</button>
+    <input id="end" type="text"  placeholder="Enter Destination Location" style="padding-right: 90px; height: 30px;">
+</div>
+<form action="nexmo-sms.php" method="post" style="text-align: center; color: white; padding-top: 25px; font-weight: bold;font-size: 21px;">Get the route on your phone:
+    <input type="text" name="number" placeholder="(e.g. 9998881234)" style="padding-right: 90px; height: 30px;">
+    <input type="submit" style="margin-left: 10px; width:110px; height:30px;"></form>
+<div id="tweetContainer"></div>
+<!-- Normal Script Functions -->
+<script>
+
+    // Vonage non refresh ajax function
+    $(function () {
+        $('form').on('submit', function (e) {
+            e.preventDefault();
+            $.ajax({
+                type: 'post',
+                url: 'nexmo-sms.php',
+                data: {htmlMsg: htmlMsg},
+                success: function () {
+                    alert('form was submitted');
+                }
+            });
+        });
+    });
+
+    var directionsService;
+    var directionsDisplay;
+    var linkOrigin;
+    var linkDest;
+
+    var map;
+    var geoJSON;
+    var request;
+    var gettingData = false;
+    var openWeatherMapKey = "9c99cfb44e61bd404e553beb5e630d04";
+    var infowindow;
+    var timeStamp;
+    var timeStampWindow = [];
+    var count = 0;
+    var htmlReq;
+    var htmlMsg;
+    var myMapType;
+
+    var latLongList = []; // List for cordinate pairs
+
+    <!-- Get Radar Timestamp -->
+    fetch("https://api.rainviewer.com/public/maps.json").then((response) => { return response.json() }).then((data) => {
+        var iterator;
+        for(iterator = 0; iterator < data.length; iterator++){
+            timeStampWindow.push(data[iterator]);
+        }
+        console.log(data);
+        timeStamp = data[0];
+    }).catch((err) => {/*Error catch here*/})
+
+    <!-- INITIALIZE MAP -->
+    function initMap() {
+
+        // Map Init Code
+        directionsService = new google.maps.DirectionsService;
+        directionsDisplay = new google.maps.DirectionsRenderer;
+        infowindow = new google.maps.InfoWindow();
+
+        map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 5,
+            center: new google.maps.LatLng(37.0902,-95.7129)
+        });
+
+        // Get Weather Radar
+        myMapType = new google.maps.ImageMapType({
+            getTileUrl: function(coord, zoom) {
+                //console.log("https://tile.openweathermap.org/map/precipitation_new/"+ zoom +"/"+coord.x+"/"+coord.y+".png?appid=9c99cfb44e61bd404e553beb5e630d04");
+                console.log("https://tilecache.rainviewer.com/v2/radar/"+timeStamp+"/256/"+zoom+"/"+coord.x+"/"+coord.y+"/4/0_0.png");
+                return "https://tilecache.rainviewer.com/v2/radar/"+timeStamp+"/256/"+zoom+"/"+coord.x+"/"+coord.y+"/4/0_0.png";
+            },
+            tileSize: new google.maps.Size(256, 256), maxZoom: 11, minZoom: 0, name: 'mymaptype'
+        });
+
+        // Directions init code
+        directionsDisplay.setMap(map);
+
+        var onChangeHandler = function() {
+            calculateAndDisplayRoute(directionsService, directionsDisplay);
+        };
+
+        // Radar Init Code
+        map.overlayMapTypes.insertAt(0, myMapType);
+
+        // Weather Init Code
+        google.maps.event.addListener(map, 'idle', checkIfDataRequested);
+
+        // Sets up and populates the info window with details
+        map.data.addListener('click', function(event){
+            infowindow.setContent(
+                "<img src=" + event.feature.getProperty("icon") + ">"
+                + "<br /><strong>" + event.feature.getProperty("city") + "</strong>"
+                + "<br />" + event.feature.getProperty("temperature") + "&deg;C"
+                + "<br />" + event.feature.getProperty("weather")
+            );
+            infowindow.setOptions({
+                position:{
+                    lat: event.latLng.lat(),
+                    lng: event.latLng.lng()
+                },
+                pixelOffset: {
+                    width: 0,
+                    height: -15
+                }
+            });
+            infowindow.open(map);
+        });
+
+        //google.maps.event.addDomListener(window, 'load', initMap);
+    } //End of initialization
+
+    <!-- DRAW ROUTE BASED ON USER INPUT -->
+    function calculateAndDisplayRoute(directionsService, directionsDisplay) {
+        directionsService.route({
+            origin: document.getElementById('start').value,
+            destination: document.getElementById('end').value,
+            travelMode: 'DRIVING',
+	    provideRouteAlternatives: true
+        }, function(response, status) {
+            if (status === 'OK') {
+                directionsDisplay.setDirections(response);
+            } else {
+                window.alert('Directions request failed due to ' + status);
+            }
+        });
+    }
+
+    <!-- WEATHER ICONS -->
+
+    // Check for new weather points
+    var checkIfDataRequested = function() {
+        // Stop extra requests being sent
+        while (gettingData === true) {
+            request.abort();
+            gettingData = false;
+        }
+        getCoords();
+    };
+
+    // Get the coordinates from the Map bounds
+    var getCoords = function() {
+        var bounds = map.getBounds();
+        var NE = bounds.getNorthEast();
+        var SW = bounds.getSouthWest();
+        getWeather(NE.lat(), NE.lng(), SW.lat(), SW.lng());
+    };
+
+    // Make the weather request
+    var getWeather = function(northLat, eastLng, southLat, westLng) {
+        gettingData = true;
+        var requestString = "https://api.openweathermap.org/data/2.5/box/city?bbox="
+            + westLng + "," + northLat + "," //left top
+            + eastLng + "," + southLat + "," //right bottom
+            + map.getZoom()
+            + "&cluster=yes&format=json"
+            + "&APPID=" + openWeatherMapKey;
+        request = new XMLHttpRequest();
+        request.onload = proccessResults;
+        request.open("get", requestString, true);
+        request.send();
+    };
+
+    // Take the JSON results and proccess them
+    var proccessResults = function() {
+        console.log(this);
+        var results = JSON.parse(this.responseText);
+        if (results.list.length > 0) {
+            resetData();
+            for (var i = 0; i < results.list.length; i++) {
+                geoJSON.features.push(jsonToGeoJson(results.list[i]));
+            }
+            drawIcons(geoJSON);
+        }
+    };
+
+    // For each result that comes back, convert the data to geoJSON
+    var jsonToGeoJson = function (weatherItem) {
+        var feature = {
+            type: "Feature",
+            properties: {
+                city: weatherItem.name,
+                weather: weatherItem.weather[0].main,
+                temperature: weatherItem.main.temp,
+                min: weatherItem.main.temp_min,
+                max: weatherItem.main.temp_max,
+                humidity: weatherItem.main.humidity,
+                pressure: weatherItem.main.pressure,
+                windSpeed: weatherItem.wind.speed,
+                windDegrees: weatherItem.wind.deg,
+                windGust: weatherItem.wind.gust,
+                icon: "https://openweathermap.org/img/w/"
+                    + weatherItem.weather[0].icon  + ".png",
+                coordinates: [weatherItem.coord.Lon, weatherItem.coord.Lat]
+            },
+            geometry: {
+                type: "Point",
+                coordinates: [weatherItem.coord.Lon, weatherItem.coord.Lat]
+            }
+        };
+
+        // Set the custom marker icon
+        map.data.setStyle(function(feature) {
+            return {
+                icon: {
+                    url: feature.getProperty('icon'),
+                    anchor: new google.maps.Point(25, 25)
+                }
+            };
+        });
+
+        // returns object
+        return feature;
+    };
+
+    // Add the markers to the map
+    var drawIcons = function (weather) {
+        map.data.addGeoJson(geoJSON);
+        // Set the flag to finished
+        gettingData = false;
+    };
+
+    // Clear data layer and geoJSON
+    var resetData = function () {
+        geoJSON = {
+            type: "FeatureCollection",
+            features: []
+        };
+        map.data.forEach(function(feature) {
+            map.data.remove(feature);
+        });
+    };
+
+    <!-- DIRECTION LIST -->
+    //google.maps.event.addDomListener(window, 'load', initMap);
+    /*
+    <!-- GENERATE DIRECTIONS LAT AND LONGI POINTS -->
+    function displayDirections (origin, dest){
+
+        const proxyurl = 'https://cors-anywhere.herokuapp.com/';
+        const api_url = 'https://maps.googleapis.com/maps/api/directions/json?origin='+origin+'&destination='+dest+'&key=AIzaSyCb1cNnqPON86Tr-KctC6Sm1wSpvWeqLU8';
+        var h = document.getElementById("steplist");
+
+        async function getDirections(){
+
+            const response = await fetch(proxyurl + api_url);
+            const data = await response.json();
+
+
+            //Get all direction steps from the route
+            if(data["routes"] != undefined){
+                var r;
+                for(r = 0; r < data.routes.length; r++){
+                    var l;
+                    for(l = 0; l < data.routes[0].legs.length; l++){
+
+                        var st;
+                        for(st = 0; st < data.routes[0].legs[l].steps.length; st++){
+                            h.innerHTML+= (st+1).toString()+". " + data.routes[0].legs[l].steps[st].start_location["lat"] + ", " + data.routes[0].legs[l].steps[st].start_location["lng"] + "<br>";
+                            let cordPair = {
+                                latitude: data.routes[0].legs[l].steps[st].start_location["lat"],
+                                longitude: data.routes[0].legs[l].steps[st].start_location["lng"]
+                            }
+                            latLongList.push(cordPair);
+                        }
+                    }
+                }
+            }
+        }
+        getDirections();
+        console.log(latLongList);
+    }*/
+
+    <!-- TWITTER CODE -->
+
+    const token = "AAAAAAAAAAAAAAAAAAAAADfgJAEAAAAA6xFb2NTV9W4pENarUXDaLsY1XuM%3Dq64CpklRlWzhJebR6oWtb5eOd0Ug33ZghjpXhjn5ouuMdBydk6"
+    const endpointUrl = 'https://api.twitter.com/2/tweets/search/recent'
+
+    async function pull_tweets(){
+        document.querySelector("#tweetContainer").innerHTML = "";
+        try {
+            // Make request
+            const response = await getTweetRequest();
+            console.log(response)
+
+            var i;
+            for (i=0; i<6; i++) {
+                var resp = response[i];
+                const newScriptTag = document.createElement("script");
+                newScriptTag.src = `/twitter_stuff/oembed.js?tweet=https://twitter.com/user/status/${resp.id}`;
+                document.querySelector("#tweetContainer").appendChild(newScriptTag);
+            }
+
+        } catch(e) {
+            console.error(e);
+        }
+    }
+
+    async function getTweetRequest(){
+        const res = await fetch("/twitter.php");
+        return res.json();
+    }
+
+    <!--FORECAST CODE-->
+
+    function Get(link){
+        var Httpreq = new XMLHttpRequest(); // a new request
+        Httpreq.open("GET",link,false);
+        Httpreq.send(null);
+        return Httpreq.responseText;
+    }
+
+    // Weather Prediction Header
+    function weatherPrediction(){
+        var start = document.getElementById("zip").value;
+        var coordLink = "https://api.openweathermap.org/data/2.5/weather?zip="+start+"&appid=8bd2aa3d57eb94761611bd6d7b9bf1f3&units=imperial";
+        var findCoord = JSON.parse(Get(coordLink));
+        var lat = findCoord.coord.lat;
+        var lon = findCoord.coord.lon;
+        var htmlReq = "https://api.openweathermap.org/data/2.5/onecall?lat="+lat+"&lon="+lon+"&exclude=current,minutely,hourly,alerts&appid=8bd2aa3d57eb94761611bd6d7b9bf1f3&units=imperial";
+        var weatherData = JSON.parse(Get(htmlReq));
+        var htmlStr = "";
+        var i;
+        for (i = 0; i < weatherData.daily.length-3; i++) {
+            var date = new Date(weatherData.daily[i].dt * 1000);
+            var timeStr = date.toUTCString();
+            htmlStr += "<td style=\"color:white; padding-right:8px;\">"+
+                "<img src=http://openweathermap.org/img/wn/"+weatherData.daily[i].weather[0].icon+"@2x.png><br>" +
+                " Date: " + timeStr.substring(0, timeStr.length-12) + "<br>" +
+                " Min temp: " + weatherData.daily[i].temp.min + "&deg;F<br>" +
+                " Max temp: " + weatherData.daily[i].temp.max + "&deg;F<br>" +
+                " Humidity: " + weatherData.daily[i].humidity + "%<br>" +
+                " Wind Speed: " + weatherData.daily[i].wind_speed + " mph<br>" +
+                " Weather: " + weatherData.daily[i].weather[0].description + "<br>" +
+                "</td>";
+        }
+        document.getElementById("weatherForecast").innerHTML = htmlStr;
+    }
+
+    <!-- WHEN THE SEARCH BUTTON IS PRESSED -->
+    function getLocations() {
+        calculateAndDisplayRoute(directionsService, directionsDisplay); //Draw the route
+
+        console.log("pull tweets");
+        pull_tweets();
+
+        var linkOrigin = document.getElementById('start').value; //Get imputs for new webpage map
+        var linkDest = document.getElementById('end').value;
+
+        htmlReq = "https://www.google.com/maps/embed/v1/directions?key=AIzaSyCb1cNnqPON86Tr-KctC6Sm1wSpvWeqLU8&origin="+ linkOrigin +"&destination=" + linkDest;
+        htmlMsg = "https://www.google.com/maps/dir/"+linkOrigin+"/"+linkDest; // Update Phone Message
+
+        document.getElementById("link").href = htmlReq; // Update click here link
+
+        /* displayDirections(linkOrigin,linkDest); // Get direction points */
+        alert(htmlReq);
+    }
+
+</script>
+
+<!-- SCRIPT FOR ZIP CODE -->
+<script type="text/javascript">
+    $(function() {
+        // IMPORTANT: Fill in your client key
+        var clientKey = "js-q1VlCMIxjVIFREvSRzPIqrSBObzng0rhy92QGHnUMbrRLnkPG06XGauxuHqejiRx";
+        var cache = {};
+        var container = $("#example1");
+        var errorDiv = container.find("div.text-error");
+
+        /* Handle successful response */
+        function handleResp(data)
+        {
+            // Check for error
+            if (data.error_msg)
+                //document.getElementById("incity").innerHTML = "NO";
+                errorDiv.text(data.error_msg);
+            else if ("city" in data) {
+                // Set city and state
+                //container.find("input[name='city']").val(data.city);
+                //container.find("input[name='state']").val(data.state);
+                document.getElementById("incity").innerHTML = data.city+", "+data.state;
+                weatherPrediction();
+            }
+        }
+
+        // Set up event handlers
+        container.find("input[name='zipcode1']").on("keyup change", function() {
+            // Get zip code
+            var zipcode = $(this).val().substring(0, 5);
+            if (zipcode.length == 5 && /^[0-9]+$/.test(zipcode)) {
+                // Clear error
+                errorDiv.empty();
+
+                // Check cache
+                if (zipcode in cache){
+                    handleResp(cache[zipcode]);
+                }
+                else {
+                    // Build url
+                    var url = "https://www.zipcodeapi.com/rest/"+clientKey+"/info.json/" + zipcode + "/radians";
+
+                    // Make AJAX request
+                    $.ajax({
+                        "url": url,
+                        "dataType": "json"
+                    }).done(function(data) {
+                        handleResp(data);
+
+                        // Store in cache
+                        cache[zipcode] = data;
+                    }).fail(function(data) {
+                        if (data.responseText && (json = $.parseJSON(data.responseText))) {
+                            // Store in cache
+                            cache[zipcode] = json;
+
+                            // Check for error
+                            if (json.error_msg)
+                                errorDiv.text(json.error_msg);
+                        }
+                        else
+                            errorDiv.text('Request failed.');
+                    });
+                }
+            }
+        }).trigger("change");
+    });
+</script>
+</body>
+
+</html>

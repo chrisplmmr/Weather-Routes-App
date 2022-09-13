@@ -1,0 +1,25 @@
+{
+  "name": "testproj3",
+  "version": "1.0.0",
+  "description": "CS315 API project",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo 123",
+    "start": "node twitter_stuff/tweet.js",
+    "twitter": "node twitter_stuff/runGetTweets.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benrmn/testproj3.git"
+  },
+  "keywords": [
+    "[]"
+  ],
+  "author": "Aditya Pethe",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.17.1",
+    "node-fetch": "^2.6.1"
+  }
+  
+}
